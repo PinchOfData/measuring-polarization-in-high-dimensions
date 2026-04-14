@@ -337,7 +337,7 @@ def fit_path(
     lam_grid: list[float] | None = None,
     grid_size: int = 100,
     lam_min_ratio: float = 1e-3,
-    criterion: str = "bic",
+    criterion: str = "cv",
     lam_alpha: float = 1e-5,
     lam_gamma: float = 1e-5,
     max_iter: int = 500,
