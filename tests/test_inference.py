@@ -52,3 +52,10 @@ def test_subsample_ci_log_transform_returns_valid_interval():
                           n_subsamples=20, frac=0.3, seed=1, transform="log")
     assert np.all(result["ci_lower"] >= 0.5 - 1e-6)
     assert np.all(result["ci_upper"] <= 1.0 + 1e-6)
+
+
+def test_experiment_b_smoke():
+    from politext_torch.experiments import mc_coverage
+    mc_coverage.N_REP = 3
+    mc_coverage.N_SUB = 5
+    mc_coverage.run()
