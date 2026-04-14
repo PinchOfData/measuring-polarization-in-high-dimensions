@@ -90,3 +90,32 @@ def test_fit_penalized_small_lambda_close_to_mle():
     fit_penalized(m_pen, data, lam=1e-4, max_iter=2000, tol=1e-8)
     err = (m_pen.phi.detach() - m_mle.phi.detach()).abs().mean()
     assert err < 0.05, f"penalized with tiny lambda should match MLE, got {err:.3f}"
+
+
+def test_fit_path_returns_best_lam_by_bic():
+    dgp = _bigger_dgp(N=400)
+    data = _prepare(dgp)
+    model = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
+    model.init_from_data(data)
+    result = fit_path(model, data, grid_size=10, criterion="bic")
+    assert "lam" in result and isinstance(result["lam"], float)
+    assert "path" in result and len(result["path"]) == 10
+    # each path entry has the required keys
+    for entry in result["path"]:
+        assert set(entry) >= {"lam", "logLik", "df", "bic"}
+    # best_idx corresponds to min BIC
+    best = min(range(10), key=lambda i: result["path"][i]["bic"])
+    assert result["best_idx"] == best
+
+
+def test_fit_path_monotone_df_as_lambda_decreases():
+    """As lambda decreases, df (nonzero phi entries) is non-decreasing."""
+    dgp = _bigger_dgp(N=300)
+    data = _prepare(dgp)
+    model = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
+    model.init_from_data(data)
+    result = fit_path(model, data, grid_size=6, criterion="bic")
+    dfs = [e["df"] for e in result["path"]]
+    # Path is stored in decreasing lambda order; df should be non-decreasing.
+    for i in range(1, len(dfs)):
+        assert dfs[i] >= dfs[i-1] - 1  # allow small non-monotonicity from numerical noise

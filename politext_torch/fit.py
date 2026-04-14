@@ -214,6 +214,102 @@ def fit_penalized(
     return history
 
 
-def fit_path(*args, **kwargs):
-    """Placeholder — implemented in Task 7."""
-    raise NotImplementedError("fit_path is implemented in Task 7")
+def _compute_lambda_max(
+    model: PhraseChoiceModel,
+    data: PhraseData,
+    batch_size: int,
+) -> float:
+    """Smallest lambda that keeps phi = 0. Equals max_{j,t} |dNLL/dphi_{j,t}| at phi=0."""
+    with torch.no_grad():
+        orig_phi = model.phi.detach().clone()
+        model.phi.zero_()
+    model.phi.requires_grad_(True)
+    if model.phi.grad is not None:
+        model.phi.grad.zero_()
+    loss = model.poisson_nll(data, batch_size=batch_size)
+    grad = torch.autograd.grad(loss, model.phi)[0]
+    with torch.no_grad():
+        model.phi.copy_(orig_phi)
+    return grad.detach().abs().max().item()
+
+
+def _compute_bic(log_lik: float, df: int, n: int) -> float:
+    import math
+    return -2.0 * log_lik + math.log(max(n, 1)) * df
+
+
+def fit_path(
+    model: PhraseChoiceModel,
+    data: PhraseData,
+    lam_grid: list[float] | None = None,
+    grid_size: int = 100,
+    lam_min_ratio: float = 1e-3,
+    criterion: str = "bic",
+    lam_alpha: float = 1e-5,
+    lam_gamma: float = 1e-5,
+    max_iter: int = 500,
+    tol: float = 1e-5,
+    batch_size: int = 512,
+    store_path_params: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """L1 regularization path with warm starts. Returns selected lambda and diagnostics.
+
+    Grid order: DECREASING lambda (coarse to fine).
+    """
+    if lam_grid is None:
+        lam_max = _compute_lambda_max(model, data, batch_size=batch_size)
+        import numpy as np
+        lam_grid = np.geomspace(lam_max, lam_max * lam_min_ratio, grid_size).tolist()
+    else:
+        lam_grid = list(lam_grid)
+
+    path = []
+    stored = [] if store_path_params else None
+    for lam in lam_grid:
+        fit_penalized(
+            model, data, lam=lam,
+            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+            max_iter=max_iter, tol=tol,
+            batch_size=batch_size, verbose=False,
+        )
+        with torch.no_grad():
+            log_lik = -model.poisson_nll(data, batch_size=batch_size).item()
+            df = int((model.phi.detach().abs() > 1e-8).sum().item())
+            bic = _compute_bic(log_lik, df, n=data.N)
+        path.append({"lam": lam, "logLik": log_lik, "df": df, "bic": bic})
+        if stored is not None:
+            stored.append((
+                model.alpha.detach().clone(),
+                model.gamma.detach().clone(),
+                model.phi.detach().clone(),
+            ))
+        if verbose:
+            print(f"lam={lam:.4g}  logLik={log_lik:.3f}  df={df}  bic={bic:.3f}")
+
+    if criterion == "bic":
+        best_idx = min(range(len(path)), key=lambda i: path[i]["bic"])
+    else:
+        raise NotImplementedError(f"criterion={criterion!r} not yet supported")
+
+    # Restore model to best iterate
+    if stored is not None:
+        with torch.no_grad():
+            a, g, p = stored[best_idx]
+            model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
+    else:
+        # Re-fit at the best lambda for a clean final iterate
+        best_lam = path[best_idx]["lam"]
+        fit_penalized(
+            model, data, lam=best_lam,
+            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+            max_iter=max_iter, tol=tol,
+            batch_size=batch_size,
+        )
+
+    return {
+        "lam": path[best_idx]["lam"],
+        "best_idx": best_idx,
+        "path": path,
+        "path_params": stored,
+    }
