@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Conda/pip temp
+condaenv.*.requirements.txt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Environments
+venv/
+.venv/
+env/
