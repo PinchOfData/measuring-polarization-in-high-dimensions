@@ -2,8 +2,10 @@
 """Fitters for PhraseChoiceModel: fit_mle, fit_penalized, fit_path."""
 from __future__ import annotations
 
+import warnings
 from typing import Callable
 
+import numpy as np
 import torch
 
 from politext_torch._types import PhraseData
@@ -238,6 +240,97 @@ def _compute_bic(log_lik: float, df: int, n: int) -> float:
     return -2.0 * log_lik + math.log(max(n, 1)) * df
 
 
+def _subset_phrase_data(data: PhraseData, row_mask: np.ndarray) -> PhraseData:
+    """Return a new PhraseData with only the rows selected by `row_mask` (boolean, length N).
+
+    The sparse COO counts are filtered by the `i` index of their indices and
+    row indices are remapped to the new contiguous [0, n_new) range.
+    """
+    device = data.counts_sparse.device
+    row_mask_np = np.asarray(row_mask, dtype=bool)
+    if row_mask_np.shape[0] != data.N:
+        raise ValueError(
+            f"row_mask length {row_mask_np.shape[0]} != data.N={data.N}"
+        )
+    row_mask_torch = torch.from_numpy(row_mask_np).to(device=device)
+
+    coo = data.counts_sparse.coalesce()
+    indices = coo.indices()                        # (2, nnz)
+    values = coo.values()                          # (nnz,)
+
+    mask_nnz = row_mask_torch[indices[0]]          # (nnz,) bool
+    new_i_map = row_mask_torch.long().cumsum(0) - 1  # (N,) maps old row -> new row
+    old_rows = indices[0][mask_nnz]
+    new_rows = new_i_map[old_rows]
+    new_cols = indices[1][mask_nnz]
+    new_values = values[mask_nnz]
+
+    n_new = int(row_mask_torch.sum().item())
+    V = data.V
+    new_indices = torch.stack([new_rows, new_cols], dim=0)
+    new_counts = torch.sparse_coo_tensor(
+        new_indices, new_values, size=(n_new, V), device=device,
+    ).coalesce()
+
+    return PhraseData(
+        counts_sparse=new_counts,
+        log_m=data.log_m[row_mask_torch],
+        party=data.party[row_mask_torch],
+        session=data.session[row_mask_torch],
+        X=data.X[row_mask_torch],
+    )
+
+
+def _kfold_speaker_splits(
+    speaker_id: np.ndarray,
+    n_folds: int,
+    seed: int = 0,
+) -> list[np.ndarray]:
+    """Return a list of K boolean row-masks for speaker-level K-fold CV.
+
+    Each mask is True on rows whose speaker belongs to the held-out fold.
+    Unique speakers are shuffled and split into K roughly-equal groups.
+    """
+    speaker_id = np.asarray(speaker_id)
+    unique_speakers = np.unique(speaker_id)
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(unique_speakers))
+    shuffled = unique_speakers[order]
+    groups = np.array_split(shuffled, n_folds)
+    masks = []
+    for g in groups:
+        held = np.isin(speaker_id, g)
+        masks.append(held)
+    return masks
+
+
+def _held_out_deviance(
+    model: PhraseChoiceModel,
+    data_held_out: PhraseData,
+    batch_size: int,
+) -> float:
+    """Held-out Poisson negative log-likelihood. Equals deviance up to a constant."""
+    with torch.no_grad():
+        return model.poisson_nll(data_held_out, batch_size=batch_size).item()
+
+
+def _fold_has_identifying_support(data_train: PhraseData) -> bool:
+    """Check that every session in the training fold has at least one Republican
+    AND at least one Democrat. Otherwise phi for that session is not identified."""
+    sessions = data_train.session
+    party = data_train.party
+    # Consider only sessions that actually appear in the training fold.
+    unique_sessions = torch.unique(sessions)
+    for t in unique_sessions.tolist():
+        mask = sessions == t
+        parties_in_t = party[mask]
+        if (parties_in_t > 0.5).sum().item() == 0:
+            return False
+        if (parties_in_t < 0.5).sum().item() == 0:
+            return False
+    return True
+
+
 def fit_path(
     model: PhraseChoiceModel,
     data: PhraseData,
@@ -251,18 +344,44 @@ def fit_path(
     tol: float = 1e-5,
     batch_size: int = 512,
     store_path_params: bool = False,
+    cv_folds: int = 5,
+    speaker_id: np.ndarray | None = None,
+    cv_seed: int = 0,
     verbose: bool = False,
 ) -> dict:
     """L1 regularization path with warm starts. Returns selected lambda and diagnostics.
 
     Grid order: DECREASING lambda (coarse to fine).
+
+    criterion
+    ---------
+    - "bic": select lambda by Bayesian Information Criterion (full-data refit).
+    - "cv" : speaker-level K-fold CV on held-out Poisson deviance. `cv_folds`
+             controls K; `speaker_id` is an optional per-row speaker array
+             (default: each row is its own speaker).
     """
     if lam_grid is None:
         lam_max = _compute_lambda_max(model, data, batch_size=batch_size)
-        import numpy as np
         lam_grid = np.geomspace(lam_max, lam_max * lam_min_ratio, grid_size).tolist()
     else:
         lam_grid = list(lam_grid)
+
+    if criterion == "cv":
+        return _fit_path_cv(
+            model=model, data=data,
+            lam_grid=lam_grid,
+            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+            max_iter=max_iter, tol=tol,
+            batch_size=batch_size,
+            store_path_params=store_path_params,
+            cv_folds=cv_folds,
+            speaker_id=speaker_id,
+            cv_seed=cv_seed,
+            verbose=verbose,
+        )
+
+    if criterion != "bic":
+        raise NotImplementedError(f"criterion={criterion!r} not yet supported")
 
     path = []
     stored = [] if store_path_params else None
@@ -287,10 +406,7 @@ def fit_path(
         if verbose:
             print(f"lam={lam:.4g}  logLik={log_lik:.3f}  df={df}  bic={bic:.3f}")
 
-    if criterion == "bic":
-        best_idx = min(range(len(path)), key=lambda i: path[i]["bic"])
-    else:
-        raise NotImplementedError(f"criterion={criterion!r} not yet supported")
+    best_idx = min(range(len(path)), key=lambda i: path[i]["bic"])
 
     # Restore model to best iterate
     if stored is not None:
@@ -312,4 +428,144 @@ def fit_path(
         "best_idx": best_idx,
         "path": path,
         "path_params": stored,
+    }
+
+
+def _fit_path_cv(
+    model: PhraseChoiceModel,
+    data: PhraseData,
+    lam_grid: list[float],
+    lam_alpha: float,
+    lam_gamma: float,
+    max_iter: int,
+    tol: float,
+    batch_size: int,
+    store_path_params: bool,
+    cv_folds: int,
+    speaker_id: np.ndarray | None,
+    cv_seed: int,
+    verbose: bool,
+) -> dict:
+    """Speaker-level K-fold CV selection of lambda (see `fit_path`)."""
+    device = model.alpha.device
+    T = model.T
+
+    if speaker_id is None:
+        speaker_id = np.arange(data.N)
+    else:
+        speaker_id = np.asarray(speaker_id)
+
+    fold_masks = _kfold_speaker_splits(speaker_id, n_folds=cv_folds, seed=cv_seed)
+
+    n_grid = len(lam_grid)
+    cv_scores = np.full((cv_folds, n_grid), np.nan, dtype=np.float64)
+    any_valid = False
+
+    for k, fold_mask in enumerate(fold_masks):
+        train_mask = ~fold_mask
+        # Both the train and test subsets must be non-empty.
+        if fold_mask.sum() == 0 or train_mask.sum() == 0:
+            warnings.warn(
+                f"CV fold {k}: empty train or test split; skipping.",
+                UserWarning, stacklevel=2,
+            )
+            continue
+        data_train = _subset_phrase_data(data, train_mask)
+        data_test = _subset_phrase_data(data, fold_mask)
+        if not _fold_has_identifying_support(data_train):
+            warnings.warn(
+                f"CV fold {k}: training subset has a session with zero "
+                "Republicans or zero Democrats; phi unidentified. Skipping fold.",
+                UserWarning, stacklevel=2,
+            )
+            continue
+
+        fold_model = PhraseChoiceModel(V=data.V, T=T, P=data.P).to(device)
+        fold_model.init_from_data(data_train)
+
+        for idx, lam in enumerate(lam_grid):
+            fit_penalized(
+                fold_model, data_train, lam=lam,
+                lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+                max_iter=max_iter, tol=tol,
+                batch_size=batch_size, verbose=False,
+            )
+            cv_scores[k, idx] = _held_out_deviance(
+                fold_model, data_test, batch_size=batch_size,
+            )
+            if verbose:
+                print(
+                    f"  fold {k} lam={lam:.4g} "
+                    f"held-out NLL={cv_scores[k, idx]:.3f}"
+                )
+        any_valid = True
+
+    if not any_valid:
+        raise RuntimeError(
+            "No valid CV fold; too few speakers per session-party cell."
+        )
+
+    cv_avg = np.nanmean(cv_scores, axis=0)
+    best_idx = int(np.argmin(cv_avg))
+
+    # Now refit the original model on the full data along the same grid,
+    # warm-started from the empirical init, stopping at the selected lambda
+    # (so the returned model is fit on all data at the CV-selected lambda).
+    model.init_from_data(data)
+    path = []
+    stored = [] if store_path_params else None
+    for idx, lam in enumerate(lam_grid):
+        fit_penalized(
+            model, data, lam=lam,
+            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+            max_iter=max_iter, tol=tol,
+            batch_size=batch_size, verbose=False,
+        )
+        with torch.no_grad():
+            log_lik = -model.poisson_nll(data, batch_size=batch_size).item()
+            df = int((model.phi.detach().abs() > 1e-8).sum().item())
+        path.append({
+            "lam": lam,
+            "logLik": log_lik,
+            "df": df,
+            "cv_score": float(cv_avg[idx]),
+        })
+        if stored is not None:
+            stored.append((
+                model.alpha.detach().clone(),
+                model.gamma.detach().clone(),
+                model.phi.detach().clone(),
+            ))
+        if idx == best_idx and stored is None:
+            # Leave the model at this iterate; continue if user wants the
+            # full path diagnostics populated. We *could* early-return here,
+            # but keeping the loop ensures `path` is complete. After the
+            # loop we refit at best_lam for a clean final iterate.
+            pass
+        if verbose:
+            print(
+                f"lam={lam:.4g}  logLik={log_lik:.3f}  df={df}  "
+                f"cv={cv_avg[idx]:.3f}"
+            )
+
+    # Restore model to best iterate (or refit at best lambda).
+    if stored is not None:
+        with torch.no_grad():
+            a, g, p = stored[best_idx]
+            model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
+    else:
+        best_lam = path[best_idx]["lam"]
+        fit_penalized(
+            model, data, lam=best_lam,
+            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
+            max_iter=max_iter, tol=tol,
+            batch_size=batch_size,
+        )
+
+    return {
+        "lam": path[best_idx]["lam"],
+        "best_idx": best_idx,
+        "path": path,
+        "path_params": stored,
+        "cv_scores": cv_scores.tolist(),
     }

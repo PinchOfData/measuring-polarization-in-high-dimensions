@@ -119,3 +119,37 @@ def test_fit_path_monotone_df_as_lambda_decreases():
     # Path is stored in decreasing lambda order; df should be non-decreasing.
     for i in range(1, len(dfs)):
         assert dfs[i] >= dfs[i-1] - 1  # allow small non-monotonicity from numerical noise
+
+
+def test_fit_path_cv_selects_smaller_lambda_than_bic_on_weak_signal():
+    """BIC over-shrinks at weak-signal scales; CV should pick a smaller lambda."""
+    import numpy as np
+    from politext_torch.simulate import make_mc_A
+    from politext_torch.estimators import PenalizedEstimator
+    dgp = make_mc_A(V=100, T=3, N=400, seed=0)
+    est_bic = PenalizedEstimator(grid_size=20, max_iter=200,
+                                 criterion="bic").fit(
+        dgp["counts"], dgp["party"], dgp["session"])
+    est_cv = PenalizedEstimator(grid_size=20, max_iter=200,
+                                criterion="cv", cv_folds=4).fit(
+        dgp["counts"], dgp["party"], dgp["session"])
+    assert est_cv.lam_ < est_bic.lam_, (
+        f"expected CV lam < BIC lam; got CV={est_cv.lam_:.4g} vs BIC={est_bic.lam_:.4g}"
+    )
+
+
+def test_fit_path_cv_returns_per_fold_diagnostics():
+    from politext_torch.simulate import make_mc_A
+    from politext_torch.model import PhraseChoiceModel
+    from politext_torch._types import PhraseData
+    from politext_torch.fit import fit_path
+    dgp = make_mc_A(V=50, T=2, N=200, seed=0)
+    data = PhraseData.from_arrays(dgp["counts"], dgp["party"], dgp["session"])
+    model = PhraseChoiceModel(V=data.V, T=2, P=data.P)
+    model.init_from_data(data)
+    result = fit_path(model, data, grid_size=5, criterion="cv", cv_folds=3,
+                     max_iter=80)
+    assert "cv_scores" in result
+    arr = np.asarray(result["cv_scores"])
+    assert arr.shape == (3, 5)
+    assert all("cv_score" in e for e in result["path"])

@@ -123,6 +123,7 @@ class PenalizedEstimator(BasePartisanshipEstimator):
         grid_size: int = 100,
         lam_min_ratio: float = 1e-3,
         criterion: str = "bic",
+        cv_folds: int = 5,
         store_path: bool = False,
         lam_alpha: float = 1e-5,
         lam_gamma: float = 1e-5,
@@ -136,6 +137,7 @@ class PenalizedEstimator(BasePartisanshipEstimator):
         self.grid_size = grid_size
         self.lam_min_ratio = lam_min_ratio
         self.criterion = criterion
+        self.cv_folds = cv_folds
         self.store_path = store_path
         self.lam_alpha = lam_alpha
         self.lam_gamma = lam_gamma
@@ -169,8 +171,7 @@ class PenalizedEstimator(BasePartisanshipEstimator):
             self.df_path_ = None
             self.logLik_path_ = None
         else:
-            result = fit_path(
-                model, data,
+            path_kwargs = dict(
                 lam_grid=self.lam_grid, grid_size=self.grid_size,
                 lam_min_ratio=self.lam_min_ratio,
                 criterion=self.criterion,
@@ -178,11 +179,22 @@ class PenalizedEstimator(BasePartisanshipEstimator):
                 max_iter=self.max_iter, tol=self.tol,
                 store_path_params=self.store_path,
             )
+            if self.criterion == "cv":
+                path_kwargs["cv_folds"] = self.cv_folds
+                path_kwargs["speaker_id"] = speaker_id
+            result = fit_path(model, data, **path_kwargs)
             self.lam_ = float(result["lam"])
             self.lam_grid_ = [e["lam"] for e in result["path"]]
-            self.bic_path_ = [e["bic"] for e in result["path"]]
             self.df_path_ = [e["df"] for e in result["path"]]
             self.logLik_path_ = [e["logLik"] for e in result["path"]]
+            if self.criterion == "bic":
+                self.bic_path_ = [e["bic"] for e in result["path"]]
+                self.cv_path_ = None
+                self.cv_scores_ = None
+            else:
+                self.bic_path_ = None
+                self.cv_path_ = [e["cv_score"] for e in result["path"]]
+                self.cv_scores_ = result.get("cv_scores")
 
         self.alpha_ = model.alpha.detach().cpu().numpy()
         self.gamma_ = model.gamma.detach().cpu().numpy()
