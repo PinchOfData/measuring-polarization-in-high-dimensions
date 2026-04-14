@@ -60,3 +60,14 @@ def test_penalized_estimator_path_selects_bic_lambda():
     assert len(est.df_path_) == 6
     assert len(est.logLik_path_) == 6
     assert est.lam_grid_[0] >= est.lam_grid_[-1]  # decreasing grid
+
+
+def test_experiment_a_smoke():
+    """Tiny V_GRID and N_REP to confirm the experiment script runs end-to-end."""
+    from politext_torch.experiments import mc_bias_rmse
+    # Patch constants to tiny values
+    mc_bias_rmse.V_GRID = [20, 40]
+    mc_bias_rmse.N_REP = 2
+    mc_bias_rmse.N = 120
+    mc_bias_rmse.T = 2
+    mc_bias_rmse.run()

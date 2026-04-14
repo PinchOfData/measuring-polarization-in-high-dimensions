@@ -20,3 +20,5 @@ condaenv.*.requirements.txt
 venv/
 .venv/
 env/
+
+politext_torch/experiments/output/
