@@ -729,12 +729,24 @@ def test_fit_mle_recovers_true_params_in_the_large_m_limit():
     model = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
     model.init_from_data(data)
     fit_mle(model, data, optimizer="lbfgs", max_iter=100, tol=1e-8)
-    # Poisson-MLE of the logit model is identified up to a per-speaker shift;
-    # the partisan loading phi_jt is identified (enters as K*phi).
-    # Check that phi is close to the truth, relatively:
-    err = (model.phi.detach() - dgp["phi"]).abs().mean()
-    ref = dgp["phi"].abs().mean()
-    assert err / ref < 0.20, f"phi recovery error {err/ref:.3f} too large"
+
+    def _center_phrases(x):
+        # phi has shape (V, T); mean over phrases within session
+        return x - x.mean(dim=0, keepdim=True)
+
+    # The Poisson plug-in MLE (paper eq. 9, spec §5.1) differs from the
+    # multinomial DGP truth by per-session shifts c_t that are absorbed into
+    # alpha for R-speakers; these shifts are not identified from the Poisson
+    # likelihood alone. Only contrasts of phi across phrases within a session
+    # are identified, so we compare phi after centering each column (session).
+    phi_hat_c = _center_phrases(model.phi.detach())
+    phi_true_c = _center_phrases(dgp["phi"])
+    err = (phi_hat_c - phi_true_c).abs().mean()
+    ref = phi_true_c.abs().mean()
+    assert err / ref < 0.10, (
+        f"centered-phi recovery error {err/ref:.3f} too large "
+        f"(per-session shifts are absorbed by alpha; we only compare identified contrasts)"
+    )
 
 
 def test_fit_mle_adam_runs_and_reduces_loss():
