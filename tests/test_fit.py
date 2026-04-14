@@ -65,3 +65,28 @@ def test_fit_mle_adam_runs_and_reduces_loss():
     fit_mle(model, data, optimizer="adam", max_iter=500, lr=0.05, tol=1e-7)
     loss_after = model.poisson_nll(data).item()
     assert loss_after < loss_before
+
+
+def test_fit_penalized_large_lambda_zeros_phi():
+    dgp = _bigger_dgp(N=300)
+    data = _prepare(dgp)
+    model = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
+    model.init_from_data(data)
+    # Very large lambda should drive phi to exactly 0 after soft-thresholding.
+    fit_penalized(model, data, lam=1e6, max_iter=200, tol=1e-6)
+    assert (model.phi.detach().abs() < 1e-8).all()
+
+
+def test_fit_penalized_small_lambda_close_to_mle():
+    dgp = _bigger_dgp(N=600)
+    data = _prepare(dgp)
+    # MLE reference
+    m_mle = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
+    m_mle.init_from_data(data)
+    fit_mle(m_mle, data, max_iter=100, tol=1e-8)
+    # Penalized with tiny lambda
+    m_pen = PhraseChoiceModel(V=dgp["V"], T=dgp["T"], P=dgp["P"])
+    m_pen.init_from_data(data)
+    fit_penalized(m_pen, data, lam=1e-4, max_iter=2000, tol=1e-8)
+    err = (m_pen.phi.detach() - m_mle.phi.detach()).abs().mean()
+    assert err < 0.05, f"penalized with tiny lambda should match MLE, got {err:.3f}"
