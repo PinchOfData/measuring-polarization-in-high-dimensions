@@ -71,3 +71,12 @@ def test_experiment_a_smoke():
     mc_bias_rmse.N = 120
     mc_bias_rmse.T = 2
     mc_bias_rmse.run()
+
+
+def test_experiment_c_smoke():
+    from politext_torch.experiments import mc_null
+    mc_null.N_REP = 2
+    mc_null.V = 40
+    mc_null.N = 120
+    mc_null.T = 2
+    mc_null.run()
