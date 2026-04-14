@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 from politext_torch.estimators import (
-    MLEEstimator, LeaveOutEstimator,
+    MLEEstimator, LeaveOutEstimator, PenalizedEstimator,
 )
 from politext_torch.simulate import draw_counts
 
@@ -41,3 +41,22 @@ def test_leaveout_estimator_ignores_X_with_warning():
     with pytest.warns(UserWarning, match="ignored"):
         est.fit(d["counts"], d["party"], d["session"], X=d["X"])
     assert est.partisanship_.shape == (d["T"],)
+
+
+def test_penalized_estimator_with_explicit_lambda():
+    d = _big_dgp(N=300)
+    est = PenalizedEstimator(lam=0.01, max_iter=300)
+    est.fit(d["counts"], d["party"], d["session"], d["X"])
+    assert est.lam_ == 0.01
+    assert est.partisanship_.shape == (d["T"],)
+
+
+def test_penalized_estimator_path_selects_bic_lambda():
+    d = _big_dgp(N=400)
+    est = PenalizedEstimator(grid_size=6, criterion="bic", max_iter=200)
+    est.fit(d["counts"], d["party"], d["session"], d["X"])
+    assert est.lam_ is not None
+    assert len(est.bic_path_) == 6
+    assert len(est.df_path_) == 6
+    assert len(est.logLik_path_) == 6
+    assert est.lam_grid_[0] >= est.lam_grid_[-1]  # decreasing grid

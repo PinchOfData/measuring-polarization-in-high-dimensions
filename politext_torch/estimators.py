@@ -111,3 +111,87 @@ class LeaveOutEstimator(BasePartisanshipEstimator):
             counts=counts, party=party, session=session, speaker_id=speaker_id,
         )
         return self
+
+
+class PenalizedEstimator(BasePartisanshipEstimator):
+    """L1-penalized Poisson-logit estimator (politext §4.3 / eq. 9)."""
+
+    def __init__(
+        self,
+        lam: float | None = None,
+        lam_grid: list[float] | None = None,
+        grid_size: int = 100,
+        lam_min_ratio: float = 1e-3,
+        criterion: str = "bic",
+        store_path: bool = False,
+        lam_alpha: float = 1e-5,
+        lam_gamma: float = 1e-5,
+        max_iter: int = 500,
+        tol: float = 1e-5,
+        device: str = "cpu",
+    ):
+        super().__init__(device=device)
+        self.lam = lam
+        self.lam_grid = lam_grid
+        self.grid_size = grid_size
+        self.lam_min_ratio = lam_min_ratio
+        self.criterion = criterion
+        self.store_path = store_path
+        self.lam_alpha = lam_alpha
+        self.lam_gamma = lam_gamma
+        self.max_iter = max_iter
+        self.tol = tol
+
+    def fit(
+        self,
+        counts: sp.csr_matrix,
+        party: np.ndarray,
+        session: np.ndarray,
+        X: np.ndarray | None = None,
+        speaker_id: np.ndarray | None = None,
+        **fit_kwargs: Any,
+    ) -> "PenalizedEstimator":
+        data = PhraseData.from_arrays(counts, party, session, X, device=self.device)
+        self._store_metadata(data)
+        T = int(data.session.max().item()) + 1
+        model = PhraseChoiceModel(V=data.V, T=T, P=data.P).to(self.device)
+        model.init_from_data(data)
+
+        if self.lam is not None and self.lam_grid is None:
+            fit_penalized(
+                model, data, lam=self.lam,
+                lam_alpha=self.lam_alpha, lam_gamma=self.lam_gamma,
+                max_iter=self.max_iter, tol=self.tol,
+            )
+            self.lam_ = float(self.lam)
+            self.lam_grid_ = None
+            self.bic_path_ = None
+            self.df_path_ = None
+            self.logLik_path_ = None
+        else:
+            result = fit_path(
+                model, data,
+                lam_grid=self.lam_grid, grid_size=self.grid_size,
+                lam_min_ratio=self.lam_min_ratio,
+                criterion=self.criterion,
+                lam_alpha=self.lam_alpha, lam_gamma=self.lam_gamma,
+                max_iter=self.max_iter, tol=self.tol,
+                store_path_params=self.store_path,
+            )
+            self.lam_ = float(result["lam"])
+            self.lam_grid_ = [e["lam"] for e in result["path"]]
+            self.bic_path_ = [e["bic"] for e in result["path"]]
+            self.df_path_ = [e["df"] for e in result["path"]]
+            self.logLik_path_ = [e["logLik"] for e in result["path"]]
+
+        self.alpha_ = model.alpha.detach().cpu().numpy()
+        self.gamma_ = model.gamma.detach().cpu().numpy()
+        self.phi_ = model.phi.detach().cpu().numpy()
+        pi = partisanship(
+            model.alpha.detach().cpu(),
+            model.gamma.detach().cpu(),
+            model.phi.detach().cpu(),
+            data.X.cpu(), data.session.cpu(), data.party.cpu(),
+        )
+        self.partisanship_ = pi.numpy()
+        return self
