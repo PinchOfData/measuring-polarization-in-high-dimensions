@@ -43,3 +43,50 @@ class PhraseChoiceModel(nn.Module):
         self.alpha.copy_(alpha_new)
         self.gamma.zero_()
         self.phi.zero_()
+
+    def poisson_nll(
+        self,
+        data: PhraseData,
+        batch_size: int = 512,
+        ridge_alpha: float = 0.0,
+        ridge_gamma: float = 0.0,
+    ) -> torch.Tensor:
+        """Poisson NLL (negated log-likelihood, to minimize).
+
+        Rate sum is accumulated in document-batches of `batch_size`.
+        Data-fit term is computed on the sparse nnz entries only.
+        """
+        N, V = data.N, data.V
+        session = data.session
+        party = data.party
+        X = data.X
+        log_m = data.log_m
+
+        rate_sum = X.new_zeros(())
+        for start in range(0, N, batch_size):
+            end = min(start + batch_size, N)
+            sl = slice(start, end)
+            u_B = (
+                self.alpha[:, session[sl]].T                     # (|B|, V)
+                + X[sl] @ self.gamma.T                           # (|B|, V)
+                + self.phi[:, session[sl]].T * party[sl, None]   # (|B|, V)
+            )
+            rate_sum = rate_sum + torch.exp(log_m[sl, None] + u_B).sum()
+
+        coo = data.counts_sparse.coalesce()
+        idx = coo.indices()         # (2, nnz)
+        vals = coo.values()         # (nnz,)
+        i_idx, j_idx = idx[0], idx[1]
+        u_obs = (
+            self.alpha[j_idx, session[i_idx]]
+            + (X[i_idx] * self.gamma[j_idx]).sum(dim=-1)
+            + self.phi[j_idx, session[i_idx]] * party[i_idx]
+        )
+        data_fit = (vals * u_obs).sum()
+
+        loss = rate_sum - data_fit
+        if ridge_alpha > 0:
+            loss = loss + 0.5 * ridge_alpha * (self.alpha ** 2).sum()
+        if ridge_gamma > 0:
+            loss = loss + 0.5 * ridge_gamma * (self.gamma ** 2).sum()
+        return loss
