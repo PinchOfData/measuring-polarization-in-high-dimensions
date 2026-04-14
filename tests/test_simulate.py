@@ -44,3 +44,20 @@ def test_draw_counts_freqs_converge_to_softmax_probs(tiny_dgp):
     )
     empirical = counts.toarray()[0] / counts.sum()
     np.testing.assert_allclose(empirical, expected, atol=2e-3)
+
+
+def test_make_mc_A_shapes_sensible():
+    from politext_torch.simulate import make_mc_A
+    out = make_mc_A(V=50, T=3, N=200, seed=0)
+    assert out["counts"].shape == (200, 50)
+    assert out["party"].shape == (200,)
+    assert out["session"].shape == (200,)
+    assert out["true_pi"].shape == (3,)
+
+
+def test_make_mc_C_is_null():
+    from politext_torch.simulate import make_mc_C
+    out = make_mc_C(V=20, T=2, N=100, seed=0)
+    # phi = 0 -> true partisanship is exactly 0.5 in every session.
+    assert out["true_phi"].abs().max() < 1e-9
+    assert np.allclose(out["true_pi"], 0.5)
