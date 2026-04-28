@@ -7,12 +7,14 @@ Run: python -m politext_torch.experiments.mc_coverage
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 
 from politext_torch.estimators import LeaveOutEstimator, PenalizedEstimator
 from politext_torch.inference import subsample_ci
@@ -22,18 +24,22 @@ N_REP = 100
 N_SUB = 50          # smaller than paper's 100 for tractability
 FRAC = 0.1
 OUT = Path(__file__).resolve().parent / "output"
+DEVICE = os.environ.get(
+    "POLITEXT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 
 def run():
     OUT.mkdir(exist_ok=True)
+    print(f"device: {DEVICE}")
     rows = []
     for rep in range(N_REP):
         t0 = time.time()
         dgp = make_mc_B(V=100, T=5, N=600, seed=rep)
         true_pi = dgp["true_pi"]
         for name, factory in [
-            ("LeaveOut", lambda: LeaveOutEstimator()),
-            ("Penalized", lambda: PenalizedEstimator(grid_size=8, max_iter=60)),
+            ("LeaveOut", lambda: LeaveOutEstimator(device=DEVICE)),
+            ("Penalized", lambda: PenalizedEstimator(grid_size=8, max_iter=60, device=DEVICE)),
         ]:
             result = subsample_ci(
                 factory, dgp["counts"], dgp["party"], dgp["session"],

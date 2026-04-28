@@ -7,12 +7,14 @@ Run: python -m politext_torch.experiments.mc_null
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 
 from politext_torch.estimators import (
     LeaveOutEstimator, MLEEstimator, PenalizedEstimator,
@@ -24,18 +26,22 @@ V = 500
 T = 3
 N = 600
 OUT = Path(__file__).resolve().parent / "output"
+DEVICE = os.environ.get(
+    "POLITEXT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 
 def run():
     OUT.mkdir(exist_ok=True)
+    print(f"device: {DEVICE}")
     rows = []
     for rep in range(N_REP):
         t0 = time.time()
         dgp = make_mc_C(V=V, T=T, N=N, seed=rep)
         for name, est in [
-            ("MLE", MLEEstimator(max_iter=30)),
-            ("LeaveOut", LeaveOutEstimator()),
-            ("Penalized", PenalizedEstimator(grid_size=10, max_iter=80)),
+            ("MLE", MLEEstimator(max_iter=30, device=DEVICE)),
+            ("LeaveOut", LeaveOutEstimator(device=DEVICE)),
+            ("Penalized", PenalizedEstimator(grid_size=10, max_iter=80, device=DEVICE)),
         ]:
             est.fit(dgp["counts"], dgp["party"], dgp["session"])
             pi_hat = est.partisanship_

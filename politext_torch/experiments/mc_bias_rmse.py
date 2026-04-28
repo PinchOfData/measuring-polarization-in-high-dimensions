@@ -6,12 +6,14 @@ Run: python -m politext_torch.experiments.mc_bias_rmse
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 
 from politext_torch.estimators import (
     LeaveOutEstimator, MLEEstimator, PenalizedEstimator,
@@ -23,10 +25,14 @@ N_REP = 50
 N = 800
 T = 5
 OUT = Path(__file__).resolve().parent / "output"
+DEVICE = os.environ.get(
+    "POLITEXT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu"
+)
 
 
 def run():
     OUT.mkdir(exist_ok=True)
+    print(f"device: {DEVICE}")
     rows = []
     for V in V_GRID:
         print(f"=== V = {V} ===")
@@ -35,9 +41,9 @@ def run():
             dgp = make_mc_A(V=V, T=T, N=N, seed=rep)
             true_pi = dgp["true_pi"]
             for name, est in [
-                ("MLE", MLEEstimator(max_iter=30)),
-                ("LeaveOut", LeaveOutEstimator()),
-                ("Penalized", PenalizedEstimator(grid_size=15, max_iter=80)),
+                ("MLE", MLEEstimator(max_iter=30, device=DEVICE)),
+                ("LeaveOut", LeaveOutEstimator(device=DEVICE)),
+                ("Penalized", PenalizedEstimator(grid_size=15, max_iter=80, device=DEVICE)),
             ]:
                 est.fit(dgp["counts"], dgp["party"], dgp["session"])
                 pi_hat = est.partisanship_

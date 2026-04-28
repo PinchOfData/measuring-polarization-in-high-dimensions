@@ -129,6 +129,8 @@ class PenalizedEstimator(BasePartisanshipEstimator):
         lam_gamma: float = 1e-5,
         max_iter: int = 500,
         tol: float = 1e-5,
+        batch_size: int = 512,
+        verbose: bool = False,
         device: str = "cpu",
     ):
         super().__init__(device=device)
@@ -143,6 +145,8 @@ class PenalizedEstimator(BasePartisanshipEstimator):
         self.lam_gamma = lam_gamma
         self.max_iter = max_iter
         self.tol = tol
+        self.batch_size = batch_size
+        self.verbose = verbose
 
     def fit(
         self,
@@ -164,6 +168,8 @@ class PenalizedEstimator(BasePartisanshipEstimator):
                 model, data, lam=self.lam,
                 lam_alpha=self.lam_alpha, lam_gamma=self.lam_gamma,
                 max_iter=self.max_iter, tol=self.tol,
+                batch_size=self.batch_size, verbose=self.verbose,
+                **fit_kwargs,
             )
             self.lam_ = float(self.lam)
             self.lam_grid_ = None
@@ -177,12 +183,13 @@ class PenalizedEstimator(BasePartisanshipEstimator):
                 criterion=self.criterion,
                 lam_alpha=self.lam_alpha, lam_gamma=self.lam_gamma,
                 max_iter=self.max_iter, tol=self.tol,
+                batch_size=self.batch_size, verbose=self.verbose,
                 store_path_params=self.store_path,
             )
             if self.criterion == "cv":
                 path_kwargs["cv_folds"] = self.cv_folds
                 path_kwargs["speaker_id"] = speaker_id
-            result = fit_path(model, data, **path_kwargs)
+            result = fit_path(model, data, **path_kwargs, **fit_kwargs)
             self.lam_ = float(result["lam"])
             self.lam_grid_ = [e["lam"] for e in result["path"]]
             self.df_path_ = [e["df"] for e in result["path"]]

@@ -390,7 +390,7 @@ def fit_path(
             model, data, lam=lam,
             lam_alpha=lam_alpha, lam_gamma=lam_gamma,
             max_iter=max_iter, tol=tol,
-            batch_size=batch_size, verbose=False,
+            batch_size=batch_size, verbose=verbose,
         )
         with torch.no_grad():
             log_lik = -model.poisson_nll(data, batch_size=batch_size).item()
@@ -420,7 +420,7 @@ def fit_path(
             model, data, lam=best_lam,
             lam_alpha=lam_alpha, lam_gamma=lam_gamma,
             max_iter=max_iter, tol=tol,
-            batch_size=batch_size,
+            batch_size=batch_size, verbose=verbose,
         )
 
     return {
@@ -488,7 +488,7 @@ def _fit_path_cv(
                 fold_model, data_train, lam=lam,
                 lam_alpha=lam_alpha, lam_gamma=lam_gamma,
                 max_iter=max_iter, tol=tol,
-                batch_size=batch_size, verbose=False,
+                batch_size=batch_size, verbose=verbose,
             )
             cv_scores[k, idx] = _held_out_deviance(
                 fold_model, data_test, batch_size=batch_size,
@@ -519,7 +519,7 @@ def _fit_path_cv(
             model, data, lam=lam,
             lam_alpha=lam_alpha, lam_gamma=lam_gamma,
             max_iter=max_iter, tol=tol,
-            batch_size=batch_size, verbose=False,
+            batch_size=batch_size, verbose=verbose,
         )
         with torch.no_grad():
             log_lik = -model.poisson_nll(data, batch_size=batch_size).item()
@@ -559,7 +559,7 @@ def _fit_path_cv(
             model, data, lam=best_lam,
             lam_alpha=lam_alpha, lam_gamma=lam_gamma,
             max_iter=max_iter, tol=tol,
-            batch_size=batch_size,
+            batch_size=batch_size, verbose=verbose,
         )
 
     return {
