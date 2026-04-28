@@ -1,0 +1,79 @@
+PyTorch implementation of the penalized multinomial partisanship estimator
+of Gentzkow, Shapiro, and Taddy (2019, Econometrica). The multinomial
+inverse regression framework is due to Taddy (2013, 2015); the penalized
+estimator is due to Taddy (2017) and Gentzkow, Shapiro, and Taddy (2019).
+The package also supports subsampling confidence intervals and unseen-text
+scaling. For applications, see Cagé, Le Pennec, and Mougin (2024),
+Osnabrügge, Ash, and Morelli (2023), and Widmer, Abed Meraim, Galletta,
+and Ash (2022).
+
+
+@article{taddy2013mnir,
+  author  = {Taddy, Matt},
+  title   = {Multinomial Inverse Regression for Text Analysis},
+  journal = {Journal of the American Statistical Association},
+  volume  = {108},
+  number  = {503},
+  pages   = {755--770},
+  year    = {2013},
+}
+
+@article{taddy2015dmr,
+  author  = {Taddy, Matt},
+  title   = {Distributed Multinomial Regression},
+  journal = {The Annals of Applied Statistics},
+  volume  = {9},
+  number  = {3},
+  pages   = {1394--1414},
+  year    = {2015},
+}
+
+@article{taddy2017onestep,
+  author  = {Taddy, Matt},
+  title   = {One-Step Estimator Paths for Concave Regularization},
+  journal = {Journal of Computational and Graphical Statistics},
+  volume  = {26},
+  number  = {3},
+  pages   = {525--536},
+  year    = {2017},
+}
+
+@article{gentzkow2019measuring,
+  author  = {Gentzkow, Matthew and Shapiro, Jesse M. and Taddy, Matt},
+  title   = {Measuring Group Differences in High-Dimensional Choices: Method and Application to Congressional Speech},
+  journal = {Econometrica},
+  volume  = {87},
+  number  = {4},
+  pages   = {1307--1340},
+  year    = {2019},
+}
+
+@article{cage2024firm,
+  author  = {Cag{\'e}, Julia and Le Pennec, Caroline and Mougin, Elisa},
+  title   = {Firm Donations and Political Rhetoric: Evidence from a National Ban},
+  journal = {American Economic Journal: Economic Policy},
+  volume  = {16},
+  number  = {3},
+  pages   = {217--256},
+  year    = {2024},
+}
+
+@article{osnabrugge2023crossdomain,
+  author  = {Osnabr{\"u}gge, Moritz and Ash, Elliott and Morelli, Massimo},
+  title   = {Cross-Domain Topic Classification for Political Texts},
+  journal = {Political Analysis},
+  volume  = {31},
+  number  = {1},
+  pages   = {59--80},
+  year    = {2023},
+}
+
+@misc{widmer2022contagious,
+  author        = {Widmer, Philine and Abed Meraim, Cl{\'e}mentine and Galletta, Sergio and Ash, Elliott},
+  title         = {Media Slant Is Contagious},
+  year          = {2022},
+  eprint        = {2202.07269},
+  archivePrefix = {arXiv},
+  primaryClass  = {econ.GN},
+  doi           = {10.48550/arXiv.2202.07269},
+}
