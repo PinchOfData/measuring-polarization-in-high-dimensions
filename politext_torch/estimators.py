@@ -121,7 +121,7 @@ class PenalizedEstimator(BasePartisanshipEstimator):
         lam: float | None = None,
         lam_grid: list[float] | None = None,
         grid_size: int = 100,
-        lam_min_ratio: float = 1e-3,
+        lam_min_ratio: float = 1e-5,
         criterion: str = "cv",
         cv_folds: int = 5,
         store_path: bool = False,

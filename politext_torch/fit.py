@@ -336,7 +336,7 @@ def fit_path(
     data: PhraseData,
     lam_grid: list[float] | None = None,
     grid_size: int = 100,
-    lam_min_ratio: float = 1e-3,
+    lam_min_ratio: float = 1e-5,
     criterion: str = "cv",
     lam_alpha: float = 1e-5,
     lam_gamma: float = 1e-5,
