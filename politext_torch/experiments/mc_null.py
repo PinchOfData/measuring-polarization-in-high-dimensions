@@ -54,9 +54,18 @@ def run():
     df.to_csv(OUT / "results_c.csv", index=False)
 
     fig, ax = plt.subplots(figsize=(8, 5))
+    # Shared bin range across estimators: a correctly-shrunk Penalized fit on
+    # the null DGP returns pi_hat = 0.5 exactly (point mass), so per-estimator
+    # auto-ranged histograms fail. Pad min/max by 1% of span (or eps) so a
+    # degenerate column still bins to a single non-empty bar.
+    all_vals = df["pi_hat"].values
+    lo, hi = float(all_vals.min()), float(all_vals.max())
+    pad = max((hi - lo) * 0.01, 1e-4)
+    hist_range = (lo - pad, hi + pad)
     for est in df["estimator"].unique():
         sub = df[df["estimator"] == est]
-        ax.hist(sub["pi_hat"].values, bins=30, alpha=0.4, label=est, density=True)
+        ax.hist(sub["pi_hat"].values, bins=30, range=hist_range,
+                alpha=0.4, label=est, density=True)
     ax.axvline(0.5, color="k", lw=1)
     ax.set_xlabel(r"$\hat\pi_t$"); ax.set_ylabel("density")
     ax.set_title(f"Experiment C: null (φ=0), V={V}, N={N}")

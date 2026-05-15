@@ -39,7 +39,20 @@ def partisanship(
     session: torch.Tensor,         # (N,)
     party: torch.Tensor,           # (N,) in {0, 1}
 ) -> torch.Tensor:
-    """Session-level average partisanship (politext eq. 3-5)."""
+    """Session-level average partisanship (politext eq. 3-5).
+
+    Casts inputs to float64 internally. The aggregation
+        pi_i = 0.5*sum_j(q_R[j]*rho[j]) + 0.5*sum_j(q_D[j]*(1-rho[j]))
+    suffers heavy cancellation near 0.5 when phi is small (covariate-adjusted
+    regime); float32 ulp at 0.5 is ~6e-8, which floors observed pi at
+    0.5 + 1ulp even when the true value is, e.g., 0.5005. Casting only here
+    is cheap and leaves model fitting in float32.
+    """
+    alpha = alpha.to(torch.float64)
+    gamma = gamma.to(torch.float64)
+    phi = phi.to(torch.float64)
+    X = X.to(torch.float64)
+    party = party.to(torch.float64)
     T = alpha.shape[1]
     N = X.shape[0]
     out = torch.full((T,), float("nan"), dtype=torch.float64)

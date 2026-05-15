@@ -102,7 +102,13 @@ def subsample_ci(
             return u
         return 0.5 + np.exp(u)
 
-    # Per-session: compute quantiles of Q_b = sqrt(tau) * (g(pi_b) - g(pi_hat))
+    # Per-session: compute quantiles of Q_b.
+    #
+    # Centering: GST 2019 (NBER w22423, Fig. 2 caption) center Q at the
+    # subsample mean, not at the full-sample estimate. The CI is still
+    # anchored at pi_hat via inversion. The textbook Politis-Romano-Wolf
+    # form centers at pi_hat itself; the subsample-mean form removes a
+    # finite-sample bias term and matches the published GST recipe.
     lo = np.full(T, np.nan)
     hi = np.full(T, np.nan)
     for t in range(T):
@@ -111,16 +117,18 @@ def subsample_ci(
         valid = np.isfinite(subs[:, t])
         if valid.sum() < 2:
             continue
-        g_hat = _g(np.array([pi_hat[t]]))[0]
+        g_hat = _g(np.array([pi_hat[t]]))[0]  # for inversion only
         use_log_here = (transform == "log") and (pi_hat[t] - 0.5 > 1e-6)
         if transform == "log" and not use_log_here:
             # Fall back to identity per session near 0.5.
-            Q = np.sqrt(tau) * (subs[valid, t] - pi_hat[t])
+            sub_mean = float(subs[valid, t].mean())
+            Q = np.sqrt(tau) * (subs[valid, t] - sub_mean)
             q_lo, q_hi = np.quantile(Q, [alpha / 2, 1 - alpha / 2])
             lo[t] = pi_hat[t] - q_hi / np.sqrt(n_full)
             hi[t] = pi_hat[t] - q_lo / np.sqrt(n_full)
         else:
-            Q = np.sqrt(tau) * (_g(subs[valid, t]) - g_hat)
+            g_sub_mean = _g(np.array([subs[valid, t].mean()]))[0]
+            Q = np.sqrt(tau) * (_g(subs[valid, t]) - g_sub_mean)
             q_lo, q_hi = np.quantile(Q, [alpha / 2, 1 - alpha / 2])
             lo[t] = _g_inv(g_hat - q_hi / np.sqrt(n_full))
             hi[t] = _g_inv(g_hat - q_lo / np.sqrt(n_full))

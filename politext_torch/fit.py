@@ -95,8 +95,8 @@ def fit_penalized(
     lam: float,
     lam_alpha: float = 1e-5,
     lam_gamma: float = 1e-5,
-    max_iter: int = 500,
-    tol: float = 1e-5,
+    max_iter: int = 2000,
+    tol: float = 1e-7,
     backtracking: bool = True,
     batch_size: int = 512,
     verbose: bool = False,
@@ -340,8 +340,8 @@ def fit_path(
     criterion: str = "cv",
     lam_alpha: float = 1e-5,
     lam_gamma: float = 1e-5,
-    max_iter: int = 500,
-    tol: float = 1e-5,
+    max_iter: int = 2000,
+    tol: float = 1e-7,
     batch_size: int = 512,
     store_path_params: bool = False,
     cv_folds: int = 5,
@@ -383,8 +383,15 @@ def fit_path(
     if criterion != "bic":
         raise NotImplementedError(f"criterion={criterion!r} not yet supported")
 
+    # Always store params at every grid point so we can restore the best_idx
+    # iterate exactly. The previous store_path_params=False branch ended the
+    # loop at lam_min and then refit at best_lam from that dense warm-start;
+    # FISTA's L1 prox shrinks phi faster than the gradient can rebuild the
+    # active set within max_iter, leaving phi at ~1e-6 (above the >1e-8 df
+    # threshold but well below converged values), which collapses pi_hat
+    # toward 0.5 in covariate runs.
     path = []
-    stored = [] if store_path_params else None
+    stored = []
     for lam in lam_grid:
         fit_penalized(
             model, data, lam=lam,
@@ -397,37 +404,25 @@ def fit_path(
             df = int((model.phi.detach().abs() > 1e-8).sum().item())
             bic = _compute_bic(log_lik, df, n=data.N)
         path.append({"lam": lam, "logLik": log_lik, "df": df, "bic": bic})
-        if stored is not None:
-            stored.append((
-                model.alpha.detach().clone(),
-                model.gamma.detach().clone(),
-                model.phi.detach().clone(),
-            ))
+        stored.append((
+            model.alpha.detach().clone(),
+            model.gamma.detach().clone(),
+            model.phi.detach().clone(),
+        ))
         if verbose:
             print(f"lam={lam:.4g}  logLik={log_lik:.3f}  df={df}  bic={bic:.3f}")
 
     best_idx = min(range(len(path)), key=lambda i: path[i]["bic"])
 
-    # Restore model to best iterate
-    if stored is not None:
-        with torch.no_grad():
-            a, g, p = stored[best_idx]
-            model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
-    else:
-        # Re-fit at the best lambda for a clean final iterate
-        best_lam = path[best_idx]["lam"]
-        fit_penalized(
-            model, data, lam=best_lam,
-            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
-            max_iter=max_iter, tol=tol,
-            batch_size=batch_size, verbose=verbose,
-        )
+    with torch.no_grad():
+        a, g, p = stored[best_idx]
+        model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
 
     return {
         "lam": path[best_idx]["lam"],
         "best_idx": best_idx,
         "path": path,
-        "path_params": stored,
+        "path_params": stored if store_path_params else None,
     }
 
 
@@ -508,12 +503,13 @@ def _fit_path_cv(
     cv_avg = np.nanmean(cv_scores, axis=0)
     best_idx = int(np.argmin(cv_avg))
 
-    # Now refit the original model on the full data along the same grid,
-    # warm-started from the empirical init, stopping at the selected lambda
-    # (so the returned model is fit on all data at the CV-selected lambda).
+    # Refit the original model on the full data along the same grid,
+    # warm-started from the empirical init. Always store params at every grid
+    # point so we can restore best_idx exactly; see _fit_path comment for why
+    # the previous refit-at-best_lam branch produced near-zero phi.
     model.init_from_data(data)
     path = []
-    stored = [] if store_path_params else None
+    stored = []
     for idx, lam in enumerate(lam_grid):
         fit_penalized(
             model, data, lam=lam,
@@ -530,42 +526,25 @@ def _fit_path_cv(
             "df": df,
             "cv_score": float(cv_avg[idx]),
         })
-        if stored is not None:
-            stored.append((
-                model.alpha.detach().clone(),
-                model.gamma.detach().clone(),
-                model.phi.detach().clone(),
-            ))
-        if idx == best_idx and stored is None:
-            # Leave the model at this iterate; continue if user wants the
-            # full path diagnostics populated. We *could* early-return here,
-            # but keeping the loop ensures `path` is complete. After the
-            # loop we refit at best_lam for a clean final iterate.
-            pass
+        stored.append((
+            model.alpha.detach().clone(),
+            model.gamma.detach().clone(),
+            model.phi.detach().clone(),
+        ))
         if verbose:
             print(
                 f"lam={lam:.4g}  logLik={log_lik:.3f}  df={df}  "
                 f"cv={cv_avg[idx]:.3f}"
             )
 
-    # Restore model to best iterate (or refit at best lambda).
-    if stored is not None:
-        with torch.no_grad():
-            a, g, p = stored[best_idx]
-            model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
-    else:
-        best_lam = path[best_idx]["lam"]
-        fit_penalized(
-            model, data, lam=best_lam,
-            lam_alpha=lam_alpha, lam_gamma=lam_gamma,
-            max_iter=max_iter, tol=tol,
-            batch_size=batch_size, verbose=verbose,
-        )
+    with torch.no_grad():
+        a, g, p = stored[best_idx]
+        model.alpha.copy_(a); model.gamma.copy_(g); model.phi.copy_(p)
 
     return {
         "lam": path[best_idx]["lam"],
         "best_idx": best_idx,
         "path": path,
-        "path_params": stored,
+        "path_params": stored if store_path_params else None,
         "cv_scores": cv_scores.tolist(),
     }
